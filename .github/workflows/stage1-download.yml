@@ -1,4 +1,4 @@
-name: Stage 1 - Download Chromium Source
+name: Stage 1 - Download Chromium Source (Fixed)
 
 on:
   workflow_dispatch:
