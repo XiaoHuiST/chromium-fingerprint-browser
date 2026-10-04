@@ -1,0 +1,162 @@
+diff --git a/third_party/blink/renderer/platform/graphics/canvas_resource_provider.cc b/third_party/blink/renderer/platform/graphics/canvas_resource_provider.cc
+index 6789012..fghijkl 100644
+--- a/third_party/blink/renderer/platform/graphics/canvas_resource_provider.cc
++++ b/third_party/blink/renderer/platform/graphics/canvas_resource_provider.cc
+@@ -8,6 +8,8 @@
+ #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+ #include "third_party/skia/include/core/SkImage.h"
+ #include "third_party/skia/include/core/SkSurface.h"
++#include "content/browser/fingerprint_injector.h"
++#include <random>
+ 
+ namespace blink {
+ 
+@@ -156,6 +158,36 @@ scoped_refptr<StaticBitmapImage> CanvasResourceProvider::Snapshot() {
+   return StaticBitmapImage::Create(std::move(image));
+ }
+ 
++// 指纹注入: Canvas噪声添加
++void CanvasResourceProvider::AddCanvasNoise(SkBitmap* bitmap) {
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (!injector->IsInitialized()) {
++    return;
++  }
++  
++  std::string seed = injector->GetCanvasNoiseSeed();
++  if (seed.empty()) {
++    return;
++  }
++  
++  // 使用种子创建可重现的随机数生成器
++  std::hash<std::string> hasher;
++  std::mt19937 rng(static_cast<unsigned int>(hasher(seed)));
++  
++  // 获取像素数据
++  SkPixmap pixmap;
++  if (!bitmap->peekPixels(&pixmap)) {
++    return;
++  }
++  
++  uint8_t* pixels = static_cast<uint8_t*>(pixmap.writable_addr());
++  size_t size = pixmap.computeByteSize();
++  
++  // 添加微小噪声(每个像素±1-2)
++  for (size_t i = 0; i < size; i += 4) {
++    pixels[i] = static_cast<uint8_t>(pixels[i] + (rng() % 3) - 1);      // R
++    pixels[i+1] = static_cast<uint8_t>(pixels[i+1] + (rng() % 3) - 1);  // G
++    pixels[i+2] = static_cast<uint8_t>(pixels[i+2] + (rng() % 3) - 1);  // B
++    // Alpha通道不修改
++  }
++}
++
+ scoped_refptr<StaticBitmapImage> CanvasResourceProvider::GetImage() {
+   if (!IsValid())
+     return nullptr;
+@@ -167,6 +199,10 @@ scoped_refptr<StaticBitmapImage> CanvasResourceProvider::GetImage() {
+     return nullptr;
+   }
+   
++  // 在返回图像前添加噪声
++  SkBitmap bitmap;
++  if (image->asLegacyBitmap(&bitmap)) {
++    AddCanvasNoise(&bitmap);
++    image = SkImages::RasterFromBitmap(bitmap);
++  }
++  
+   return StaticBitmapImage::Create(std::move(image));
+ }
+ 
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_context.cc b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+index 7890123..ghijklm 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+@@ -10,6 +10,8 @@
+ #include "third_party/blink/renderer/modules/webaudio/audio_destination_node.h"
+ #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+ #include "third_party/blink/renderer/platform/bindings/exception_state.h"
++#include "content/browser/fingerprint_injector.h"
++#include <random>
+ 
+ namespace blink {
+ 
+@@ -78,7 +80,17 @@ AudioContext::AudioContext(Document& document,
+ }
+ 
+ float AudioContext::sampleRate() const {
+-  return destination()->GetAudioDestinationHandler().SampleRate();
++  // 指纹注入: 采样率可能被修改
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string seed = injector->GetAudioNoiseSeed();
++    if (!seed.empty()) {
++      std::hash<std::string> hasher;
++      std::mt19937 rng(static_cast<unsigned int>(hasher(seed)));
++      // 在真实采样率基础上添加微小偏差
++      float base_rate = destination()->GetAudioDestinationHandler().SampleRate();
++      return base_rate + (rng() % 10) / 100.0f;
++    }
++  }
++  return destination()->GetAudioDestinationHandler().SampleRate();
+ }
+ 
+ double AudioContext::baseLatency() const {
+@@ -86,7 +98,16 @@ double AudioContext::baseLatency() const {
+     return 0;
+   
+   // 基础延迟计算
+-  return AudioDestination().GetCallbackBufferSize() / 
+-         static_cast<double>(sampleRate());
++  double base_latency = AudioDestination().GetCallbackBufferSize() / 
++                        static_cast<double>(sampleRate());
++  
++  // 指纹注入: 延迟微调
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string seed = injector->GetAudioNoiseSeed();
++    if (!seed.empty()) {
++      std::hash<std::string> hasher;
++      std::mt19937 rng(static_cast<unsigned int>(hasher(seed)));
++      return base_latency + (rng() % 100) / 1000000.0;  // 添加微秒级偏差
++    }
++  }
++  
++  return base_latency;
+ }
+ 
+diff --git a/third_party/blink/renderer/modules/webaudio/analyser_node.cc b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
+index 8901234..hijklmn 100644
+--- a/third_party/blink/renderer/modules/webaudio/analyser_node.cc
++++ b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
+@@ -6,6 +6,8 @@
+ 
+ #include "third_party/blink/renderer/modules/webaudio/analyser_handler.h"
+ #include "third_party/blink/renderer/platform/bindings/exception_state.h"
++#include "content/browser/fingerprint_injector.h"
++#include <random>
+ 
+ namespace blink {
+ 
+@@ -45,6 +47,22 @@ void AnalyserNode::getFloatTimeDomainData(NotShared<DOMFloat32Array> array) {
+   }
+   
+   Handler().GetFloatTimeDomainData(array.Get());
++  
++  // 指纹注入: Audio数据添加噪声
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string seed = injector->GetAudioNoiseSeed();
++    if (!seed.empty()) {
++      std::hash<std::string> hasher;
++      std::mt19937 rng(static_cast<unsigned int>(hasher(seed)));
++      
++      // 添加微小噪声
++      float* data = array->Data();
++      unsigned length = array->length();
++      for (unsigned i = 0; i < length; ++i) {
++        data[i] += (rng() % 1000 - 500) / 100000.0f;  // ±0.005范围
++      }
++    }
++  }
+ }
+ 
+ void AnalyserNode::getByteTimeDomainData(NotShared<DOMUint8Array> array) {

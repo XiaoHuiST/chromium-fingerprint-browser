@@ -1,0 +1,102 @@
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+index 1234567..abcdefg 100644
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -5,6 +5,7 @@
+ #include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"
+ 
+ #include "base/system/sys_info.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -12,7 +13,14 @@ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
+   // 返回CPU逻辑核心数
+   // 原始实现: return base::SysInfo::NumberOfProcessors();
+   
+-  return base::SysInfo::NumberOfProcessors();
++  // 指纹注入: 从配置文件读取
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    int threads = injector->GetCPUThreads();
++    if (threads > 0) {
++      return static_cast<unsigned>(threads);
++    }
++  }
++  
++  return base::SysInfo::NumberOfProcessors();
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/navigator_device_memory.cc b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
+index 2345678..bcdefgh 100644
+--- a/third_party/blink/renderer/core/frame/navigator_device_memory.cc
++++ b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
+@@ -5,6 +5,7 @@
+ #include "third_party/blink/renderer/core/frame/navigator_device_memory.h"
+ 
+ #include "base/system/sys_info.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -12,7 +13,16 @@ float NavigatorDeviceMemory::deviceMemory() const {
+   // 返回设备内存大小(GB)
+   // 原始实现: return approximated_device_memory_gb_;
+   
+-  return approximated_device_memory_gb_;
++  // 指纹注入: 从配置文件读取
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    int memory_gb = injector->GetMemoryGB();
++    if (memory_gb > 0) {
++      return static_cast<float>(memory_gb);
++    }
++  }
++  
++  return approximated_device_memory_gb_;
+ }
+ 
+ }  // namespace blink
+diff --git a/ui/display/screen.cc b/ui/display/screen.cc
+index 3456789..cdefghi 100644
+--- a/ui/display/screen.cc
++++ b/ui/display/screen.cc
+@@ -5,6 +5,7 @@
+ #include "ui/display/screen.h"
+ 
+ #include "ui/display/display.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace display {
+ 
+@@ -15,6 +16,22 @@ gfx::Rect Screen::GetPrimaryDisplay() const {
+ }
+ 
+ gfx::Size Screen::GetPrimaryDisplaySize() const {
++  // 指纹注入: 屏幕分辨率
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    int width = injector->GetScreenWidth();
++    int height = injector->GetScreenHeight();
++    
++    if (width > 0 && height > 0) {
++      return gfx::Size(width, height);
++    }
++  }
++  
+   const Display& display = GetPrimaryDisplay();
+   return display.size();
+ }
+ 
++int Screen::GetColorDepth() const {
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    int depth = injector->GetColorDepth();
++    if (depth > 0) {
++      return depth;
++    }
++  }
++  return 24;  // 默认24位
++}
++
+ }  // namespace display

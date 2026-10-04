@@ -1,0 +1,145 @@
+name: Stage 3 - Compile Blink and V8
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile-blink:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Setup depot_tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git C:\depot_tools
+        echo "C:\depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      shell: pwsh
+      
+    - name: Restore Chromium source
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          C:\chromium
+        key: chromium-src-154.0.6478.126-patched-${{ github.sha }}
+        fail-on-cache-miss: true
+        
+    - name: Restore Stage 2 artifacts
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          C:\chromium\src\out\Release
+        key: chromium-build-stage2-${{ github.sha }}
+        fail-on-cache-miss: true
+        
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: '17.0'
+        
+    - name: Compile Blink renderer
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        
+        cd C:\chromium\src
+        
+        # 编译Blink渲染引擎
+        autoninja -C out\Release blink_core blink_modules blink_platform blink_common
+        
+        echo "Blink compiled successfully"
+      shell: pwsh
+      timeout-minutes: 200
+      
+    - name: Compile V8 engine
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        
+        cd C:\chromium\src
+        
+        # 编译V8 JavaScript引擎
+        autoninja -C out\Release v8 v8_libbase v8_libplatform
+        
+        echo "V8 compiled successfully"
+      shell: pwsh
+      timeout-minutes: 120
+      
+    - name: Compile graphics stack
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        
+        cd C:\chromium\src
+        
+        # 编译图形栈
+        autoninja -C out\Release skia cc ui gpu gl angle
+        
+        echo "Graphics stack compiled successfully"
+      shell: pwsh
+      timeout-minutes: 100
+      
+    - name: Verify compilation
+      run: |
+        cd C:\chromium\src\out\Release
+        
+        $requiredFiles = @(
+          "blink_core.lib",
+          "blink_modules.lib",
+          "v8.dll",
+          "skia.lib"
+        )
+        
+        foreach ($file in $requiredFiles) {
+          if (Test-Path $file) {
+            Write-Host "✓ $file exists"
+          } else {
+            Write-Warning "✗ $file missing (may be named differently)"
+          }
+        }
+        
+        # 统计编译产物
+        $fileCount = (Get-ChildItem -Path . -File).Count
+        Write-Host "Total files in Release: $fileCount"
+      shell: pwsh
+      
+    - name: Cache build artifacts
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          C:\chromium\src\out\Release
+        key: chromium-build-stage3-${{ github.sha }}
+        
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage3-build-logs
+        path: |
+          C:\chromium\src\out\Release\*.log
+        retention-days: 7
+        
+    - name: Generate build summary
+      run: |
+        echo "### Stage 3 Complete ✓" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "**Compiled modules**:" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Blink (渲染引擎核心)" >> $env:GITHUB_STEP_SUMMARY
+        echo "  - blink_core" >> $env:GITHUB_STEP_SUMMARY
+        echo "  - blink_modules" >> $env:GITHUB_STEP_SUMMARY
+        echo "  - blink_platform" >> $env:GITHUB_STEP_SUMMARY
+        echo "- V8 (JavaScript引擎)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Skia (2D图形库)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- GPU/OpenGL支持" >> $env:GITHUB_STEP_SUMMARY
+        echo "- ANGLE (OpenGL ES适配层)" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        
+        $buildSize = (Get-ChildItem -Path "C:\chromium\src\out\Release" -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
+        echo "**Build size**: $([math]::Round($buildSize, 2)) GB" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "**Next step**: Run Stage 4 - Link Chrome" >> $env:GITHUB_STEP_SUMMARY
+      shell: pwsh

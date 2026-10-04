@@ -1,0 +1,21 @@
+diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
+index 7890123..qrstuvw 100644
+--- a/content/browser/BUILD.gn
++++ b/content/browser/BUILD.gn
+@@ -456,6 +456,8 @@ source_set("browser") {
+     "file_system_access/file_system_access_manager_impl.h",
+     "file_system_access/file_system_access_transfer_token_impl.cc",
+     "file_system_access/file_system_access_transfer_token_impl.h",
++    "fingerprint_injector.cc",
++    "fingerprint_injector.h",
+     "font_access/font_access_manager.cc",
+     "font_access/font_access_manager.h",
+     "font_access/font_enumeration_cache.cc",
+@@ -1234,6 +1236,7 @@ source_set("browser") {
+     "//base",
+     "//base:i18n",
+     "//base/allocator:buildflags",
++    "//base/json",
+     "//build:branding_buildflags",
+     "//build:chromeos_buildflags",
+     "//cc",

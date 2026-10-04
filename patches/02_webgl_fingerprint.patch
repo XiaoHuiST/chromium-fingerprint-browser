@@ -1,0 +1,123 @@
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index 4567890..defghij 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -8,6 +8,7 @@
+ #include "third_party/blink/renderer/modules/webgl/webgl_debug_renderer_info.h"
+ #include "third_party/blink/renderer/platform/graphics/gpu/drawing_buffer.h"
+ #include "gpu/config/gpu_info.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -1234,6 +1235,42 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+     case GL_VERSION:
+       return WebGLAny(script_state, "WebGL 1.0");
+       
++    // 指纹注入: WebGL Vendor
++    case GLenum(WebGLDebugRendererInfo::kUnmaskedVendorWebgl): {
++      content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++      if (injector->IsInitialized()) {
++        std::string vendor = injector->GetWebGLVendor();
++        if (!vendor.empty()) {
++          return WebGLAny(script_state, String::FromUTF8(vendor));
++        }
++      }
++      // 原始逻辑
++      return WebGLAny(script_state, 
++          String("Google Inc. (") + ContextGL()->GetString(GL_VENDOR) + String(")"));
++    }
++    
++    // 指纹注入: WebGL Renderer
++    case GLenum(WebGLDebugRendererInfo::kUnmaskedRendererWebgl): {
++      content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++      if (injector->IsInitialized()) {
++        std::string renderer = injector->GetWebGLRenderer();
++        if (!renderer.empty()) {
++          return WebGLAny(script_state, String::FromUTF8(renderer));
++        }
++      }
++      // 原始逻辑
++      return WebGLAny(script_state,
++          String("ANGLE (") + ContextGL()->GetString(GL_RENDERER) + String(")"));
++    }
++    
+     case GL_SHADING_LANGUAGE_VERSION:
+-      return WebGLAny(script_state, "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)");
++      // 指纹注入: Shading Language Version
++      content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++      if (injector->IsInitialized()) {
++        std::string version = injector->GetWebGLShadingLanguageVersion();
++        if (!version.empty()) {
++          return WebGLAny(script_state, String::FromUTF8(version));
++        }
++      }
++      return WebGLAny(script_state, "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)");
+       
+     case GL_ALIASED_LINE_WIDTH_RANGE:
+       return GetWebGLFloatArrayParameter(script_state, pname);
+@@ -1456,6 +1493,23 @@ Vector<String> WebGLRenderingContextBase::getSupportedExtensions() {
+   Vector<String> result;
+   
+   // 枚举所有支持的扩展
++  
++  // 指纹注入: WebGL扩展列表
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::vector<std::string> custom_extensions = injector->GetWebGLExtensions();
++    if (!custom_extensions.empty()) {
++      // 使用配置的扩展列表
++      for (const auto& ext : custom_extensions) {
++        result.push_back(String::FromUTF8(ext));
++      }
++      return result;
++    }
++  }
++  
++  // 原始逻辑: 返回真实支持的扩展
+   for (const auto& extension : extensions_) {
+     result.push_back(extension->GetName());
+   }
+diff --git a/gpu/config/gpu_info_collector_win.cc b/gpu/config/gpu_info_collector_win.cc
+index 5678901..efghijk 100644
+--- a/gpu/config/gpu_info_collector_win.cc
++++ b/gpu/config/gpu_info_collector_win.cc
+@@ -12,6 +12,7 @@
+ #include "base/win/windows_version.h"
+ #include "third_party/angle/include/platform/Platform.h"
+ #include "ui/gl/gl_surface_egl.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace gpu {
+ 
+@@ -45,6 +46,30 @@ bool CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
+   
+   DXGI_ADAPTER_DESC adapter_desc;
+   if (SUCCEEDED(adapter->GetDesc(&adapter_desc))) {
++    
++    // 指纹注入: GPU信息
++    content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++    if (injector->IsInitialized()) {
++      std::string gpu_vendor = injector->GetGPUVendor();
++      std::string gpu_renderer = injector->GetGPURenderer();
++      
++      if (!gpu_vendor.empty() && !gpu_renderer.empty()) {
++        // 覆盖GPU信息
++        gpu_info->gpu.vendor_string = gpu_vendor;
++        gpu_info->gpu.device_string = gpu_renderer;
++        
++        // 设置虚拟的Vendor ID和Device ID
++        if (gpu_renderer.find("NVIDIA") != std::string::npos) {
++          gpu_info->gpu.vendor_id = 0x10DE;  // NVIDIA
++        } else if (gpu_renderer.find("AMD") != std::string::npos || 
++                   gpu_renderer.find("Radeon") != std::string::npos) {
++          gpu_info->gpu.vendor_id = 0x1002;  // AMD
++        }
++        
++        return true;
++      }
++    }
++    
+     // 原始逻辑
+     gpu_info->gpu.vendor_id = adapter_desc.VendorId;
+     gpu_info->gpu.device_id = adapter_desc.DeviceId;

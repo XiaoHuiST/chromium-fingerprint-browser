@@ -1,0 +1,161 @@
+diff --git a/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc b/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc
+index 3456789..mnopqrs 100644
+--- a/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc
++++ b/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc
+@@ -12,6 +12,7 @@
+ #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+ #include "third_party/webrtc/api/peer_connection_interface.h"
+ #include "third_party/webrtc/api/jsep.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -145,6 +146,16 @@ void RTCPeerConnection::createOffer(RTCSessionDescriptionCallback* success_callb
+   
+   // 创建 offer
+   peer_connection_handler_->CreateOffer(request, options);
++  
++  // 指纹注入: 检查是否应该阻止 WebRTC
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized() && injector->ShouldBlockWebRTC()) {
++    // 阻止真实的 WebRTC 连接
++    if (error_callback) {
++      error_callback->handleEvent();
++    }
++    return;
++  }
+ }
+ 
+ void RTCPeerConnection::createAnswer(RTCSessionDescriptionCallback* success_callback,
+@@ -265,6 +276,28 @@ void RTCPeerConnection::OnIceCandidate(const String& sdp,
+     return;
+   }
+   
++  // 指纹注入: 修改 ICE candidate 中的 IP 地址
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string custom_ip = injector->GetWebRTCLocalIP();
++    if (!custom_ip.empty()) {
++      // 替换 SDP 中的本地 IP
++      String modified_sdp = sdp;
++      // 查找并替换 "candidate:..." 行中的 IP
++      // 简化实现: 这里需要解析 SDP 格式
++      // 实际实现会更复杂,需要正确解析 ICE candidate
++      
++      auto* ice_candidate = MakeGarbageCollected<RTCIceCandidate>(
++          MakeGarbageCollected<RTCIceCandidateInit>());
++      ice_candidate->setCandidate(modified_sdp);
++      ice_candidate->setSdpMid(sdp_mid);
++      ice_candidate->setSdpMLineIndex(sdp_m_line_index);
++      
++      DispatchEvent(*RTCPeerConnectionIceEvent::Create(ice_candidate));
++      return;
++    }
++  }
++  
+   // 创建 ICE candidate 事件
+   auto* ice_candidate = MakeGarbageCollected<RTCIceCandidate>(
+       MakeGarbageCollected<RTCIceCandidateInit>());
+diff --git a/third_party/blink/renderer/modules/geolocation/geolocation.cc b/third_party/blink/renderer/modules/geolocation/geolocation.cc
+index 4567890..nopqrst 100644
+--- a/third_party/blink/renderer/modules/geolocation/geolocation.cc
++++ b/third_party/blink/renderer/modules/geolocation/geolocation.cc
+@@ -10,6 +10,7 @@
+ #include "third_party/blink/renderer/modules/geolocation/geolocation_position.h"
+ #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+ #include "services/device/public/mojom/geoposition.mojom-blink.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -98,6 +99,23 @@ void Geolocation::OnPositionUpdated(device::mojom::blink::GeopositionPtr positi
+     return;
+   }
+   
++  // 指纹注入: 修改地理位置
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    double custom_lat = injector->GetGeolocationLatitude();
++    double custom_lng = injector->GetGeolocationLongitude();
++    
++    if (custom_lat != 0.0 && custom_lng != 0.0) {
++      // 创建自定义位置
++      auto custom_position = device::mojom::blink::Geoposition::New();
++      custom_position->latitude = custom_lat;
++      custom_position->longitude = custom_lng;
++      custom_position->accuracy = 10.0;  // 10米精度
++      custom_position->timestamp = base::Time::Now();
++      
++      position = std::move(custom_position);
++    }
++  }
++  
+   last_position_ = MakeGarbageCollected<GeolocationPosition>(
+       position->latitude,
+       position->longitude,
+diff --git a/base/i18n/time_formatting.cc b/base/i18n/time_formatting.cc
+index 5678901..opqrstu 100644
+--- a/base/i18n/time_formatting.cc
++++ b/base/i18n/time_formatting.cc
+@@ -8,6 +8,7 @@
+ #include "base/time/time.h"
+ #include "third_party/icu/source/common/unicode/timezone.h"
+ #include "third_party/icu/source/i18n/unicode/dtfmtsym.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace base {
+ 
+@@ -34,6 +35,18 @@ std::u16string TimeFormatTimeOfDayWithMilliseconds(const Time& time) {
+ }
+ 
+ icu::TimeZone* GetDefaultTimeZone() {
++  // 指纹注入: 自定义时区
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string custom_tz = injector->GetTimezone();
++    if (!custom_tz.empty()) {
++      icu::UnicodeString tz_id = icu::UnicodeString::fromUTF8(custom_tz);
++      icu::TimeZone* timezone = icu::TimeZone::createTimeZone(tz_id);
++      if (timezone) {
++        return timezone;
++      }
++    }
++  }
++  
+   return icu::TimeZone::createDefault();
+ }
+ 
+diff --git a/third_party/blink/renderer/core/timing/time_clamper.cc b/third_party/blink/renderer/core/timing/time_clamper.cc
+index 6789012..pqrstuv 100644
+--- a/third_party/blink/renderer/core/timing/time_clamper.cc
++++ b/third_party/blink/renderer/core/timing/time_clamper.cc
+@@ -5,6 +5,8 @@
+ #include "third_party/blink/renderer/core/timing/time_clamper.h"
+ 
+ #include "base/time/time.h"
++#include "content/browser/fingerprint_injector.h"
++#include <random>
+ 
+ namespace blink {
+ 
+@@ -23,6 +25,21 @@ double TimeClamper::ClampTimeResolution(double time_seconds) const {
+   // 为了防止定时攻击,对时间精度进行限制
+   // 通常精度限制在 5 微秒
+   
++  // 指纹注入: 添加时间噪声
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string seed = injector->GetCanvasNoiseSeed();
++    if (!seed.empty()) {
++      std::hash<std::string> hasher;
++      std::mt19937 rng(static_cast<unsigned int>(hasher(seed) + static_cast<size_t>(time_seconds * 1000000)));
++      
++      // 添加微小的时间偏差(±50微秒)
++      double noise = (rng() % 100 - 50) / 1000000.0;
++      time_seconds += noise;
++    }
++  }
++  
+   constexpr double kResolutionSeconds = 0.000005;  // 5微秒
+   
+   return floor(time_seconds / kResolutionSeconds) * kResolutionSeconds;

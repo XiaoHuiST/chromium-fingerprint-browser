@@ -1,0 +1,120 @@
+name: Stage 2 - Compile Base Modules
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile-base:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Setup depot_tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git C:\depot_tools
+        echo "C:\depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      shell: pwsh
+      
+    - name: Restore Chromium source
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          C:\chromium
+        key: chromium-src-154.0.6478.126-patched-${{ github.sha }}
+        fail-on-cache-miss: true
+        
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: '17.0'
+        
+    - name: Configure build
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        $env:GYP_MSVS_VERSION = 2022
+        
+        cd C:\chromium\src
+        
+        # 生成构建配置
+        gn gen out\Release --args="is_debug=false is_component_build=false enable_nacl=false symbol_level=0 is_official_build=true chrome_pgo_phase=0 use_thin_lto=false v8_enable_i18n_support=true proprietary_codecs=true ffmpeg_branding=`"Chrome`""
+        
+        echo "Build configuration generated"
+      shell: pwsh
+      timeout-minutes: 30
+      
+    - name: Compile base modules
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        
+        cd C:\chromium\src
+        
+        # 编译基础模块
+        autoninja -C out\Release base net url ipc mojo services content/common content/public
+        
+        echo "Base modules compiled successfully"
+      shell: pwsh
+      timeout-minutes: 300
+      
+    - name: Verify compilation
+      run: |
+        cd C:\chromium\src\out\Release
+        
+        $requiredFiles = @(
+          "base.lib",
+          "net.lib",
+          "url.lib",
+          "ipc.lib"
+        )
+        
+        foreach ($file in $requiredFiles) {
+          if (Test-Path $file) {
+            Write-Host "✓ $file exists"
+          } else {
+            Write-Warning "✗ $file missing"
+          }
+        }
+      shell: pwsh
+      
+    - name: Cache build artifacts
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          C:\chromium\src\out\Release
+        key: chromium-build-stage2-${{ github.sha }}
+        
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stage2-build-logs
+        path: |
+          C:\chromium\src\out\Release\*.log
+        retention-days: 7
+        
+    - name: Generate build summary
+      run: |
+        echo "### Stage 2 Complete ✓" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "**Compiled modules**:" >> $env:GITHUB_STEP_SUMMARY
+        echo "- base (基础库)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- net (网络库)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- url (URL解析)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- ipc (进程通信)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- mojo (Mojo接口)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- services (系统服务)" >> $env:GITHUB_STEP_SUMMARY
+        echo "- content/common (内容模块)" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        
+        $buildSize = (Get-ChildItem -Path "C:\chromium\src\out\Release" -Recurse | Measure-Object -Property Length -Sum).Sum / 1GB
+        echo "**Build size**: $([math]::Round($buildSize, 2)) GB" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "**Next step**: Run Stage 3 - Compile Blink and V8" >> $env:GITHUB_STEP_SUMMARY
+      shell: pwsh

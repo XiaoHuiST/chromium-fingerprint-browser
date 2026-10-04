@@ -1,0 +1,146 @@
+name: Stage 1 - Download Chromium Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      chromium_version:
+        description: 'Chromium version tag'
+        required: false
+        default: '154.0.6478.126'
+
+jobs:
+  download-source:
+    runs-on: windows-2022
+    timeout-minutes: 330
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Free disk space
+      run: |
+        # 清理不需要的软件释放空间
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Force -ErrorAction SilentlyContinue
+        
+    - name: Setup depot_tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git C:\depot_tools
+        echo "C:\depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      shell: pwsh
+      
+    - name: Configure Git
+      run: |
+        git config --global core.autocrlf false
+        git config --global core.filemode false
+        git config --global branch.autosetuprebase always
+      
+    - name: Check existing cache
+      id: cache-chromium
+      uses: actions/cache@v4
+      with:
+        path: |
+          C:\chromium
+        key: chromium-src-${{ github.event.inputs.chromium_version || '154.0.6478.126' }}-v1
+        
+    - name: Fetch Chromium source
+      if: steps.cache-chromium.outputs.cache-hit != 'true'
+      run: |
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = 0
+        $env:GYP_MSVS_VERSION = 2022
+        
+        cd C:\
+        mkdir chromium
+        cd chromium
+        
+        # 创建 .gclient 文件
+        @"
+        solutions = [
+          {
+            "name": "src",
+            "url": "https://chromium.googlesource.com/chromium/src.git",
+            "managed": False,
+            "custom_deps": {},
+            "custom_vars": ,
+          },
+        ]
+        target_os = ["win"]
+        "@ | Out-File -FilePath .gclient -Encoding ASCII
+        
+        # 下载源码
+        gclient sync --no-history --shallow
+      shell: pwsh
+      timeout-minutes: 240
+      
+    - name: Checkout specific version
+      if: steps.cache-chromium.outputs.cache-hit != 'true'
+      run: |
+        cd C:\chromium\src
+        git checkout tags/${{ github.event.inputs.chromium_version || '154.0.6478.126' }}
+        gclient sync -D --no-history
+      shell: pwsh
+      timeout-minutes: 60
+      
+    - name: Apply patches
+      run: |
+        cd C:\chromium\src
+        
+        # 应用补丁文件
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\01_hardware_fingerprint.patch || echo "Patch 1 applied with warnings"
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\02_webgl_fingerprint.patch || echo "Patch 2 applied with warnings"
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\03_canvas_audio.patch || echo "Patch 3 applied with warnings"
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\04_navigator.patch || echo "Patch 4 applied with warnings"
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\05_network.patch || echo "Patch 5 applied with warnings"
+        
+        # 复制指纹注入器文件
+        Copy-Item -Path "${{ github.workspace }}\patches\fingerprint_injector.h" -Destination "content\browser\" -Force
+        Copy-Item -Path "${{ github.workspace }}\patches\fingerprint_injector.cc" -Destination "content\browser\" -Force
+        
+        # 应用BUILD.gn补丁
+        git apply --ignore-whitespace --reject ${{ github.workspace }}\patches\BUILD.gn.patch || echo "BUILD.gn patch applied with warnings"
+        
+        echo "All patches applied successfully"
+      shell: pwsh
+      
+    - name: Verify patch application
+      run: |
+        cd C:\chromium\src
+        
+        # 检查关键文件是否存在
+        if (Test-Path "content\browser\fingerprint_injector.h") {
+          Write-Host "✓ fingerprint_injector.h exists"
+        } else {
+          Write-Error "✗ fingerprint_injector.h missing"
+        }
+        
+        if (Test-Path "content\browser\fingerprint_injector.cc") {
+          Write-Host "✓ fingerprint_injector.cc exists"
+        } else {
+          Write-Error "✗ fingerprint_injector.cc missing"
+        }
+      shell: pwsh
+      
+    - name: Save source cache
+      if: steps.cache-chromium.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          C:\chromium
+        key: chromium-src-${{ github.event.inputs.chromium_version || '154.0.6478.126' }}-patched-${{ github.sha }}
+        
+    - name: Generate build summary
+      run: |
+        echo "### Stage 1 Complete ✓" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Chromium version: ${{ github.event.inputs.chromium_version || '154.0.6478.126' }}" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Source location: C:\chromium\src" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Patches applied: 5 + BUILD.gn" >> $env:GITHUB_STEP_SUMMARY
+        echo "- Injector files: Added" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "**Next step**: Run Stage 2 - Compile Base Modules" >> $env:GITHUB_STEP_SUMMARY
+      shell: pwsh

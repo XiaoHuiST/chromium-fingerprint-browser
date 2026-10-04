@@ -1,0 +1,160 @@
+diff --git a/third_party/blink/renderer/core/frame/navigator_id.cc b/third_party/blink/renderer/core/frame/navigator_id.cc
+index 9012345..ijklmno 100644
+--- a/third_party/blink/renderer/core/frame/navigator_id.cc
++++ b/third_party/blink/renderer/core/frame/navigator_id.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -13,7 +14,17 @@ String NavigatorID::userAgent() const {
+   // User-Agent字符串
+   // 通常从content层获取
+   
+-  return GetUserAgent();
++  // 指纹注入: User-Agent
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string ua = injector->GetUserAgent();
++    if (!ua.empty()) {
++      return String::FromUTF8(ua);
++    }
++  }
++  
++  return GetUserAgent();
+ }
+ 
+ String NavigatorID::appCodeName() const {
+@@ -29,11 +40,31 @@ String NavigatorID::appVersion() const {
+ }
+ 
+ String NavigatorID::platform() const {
+-  return String("Win32");
++  // 指纹注入: Platform
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string platform = injector->GetPlatform();
++    if (!platform.empty()) {
++      return String::FromUTF8(platform);
++    }
++  }
++  
++  return String("Win32");
+ }
+ 
+ String NavigatorID::vendor() const {
+-  return String("Google Inc.");
++  // 指纹注入: Vendor
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string vendor = injector->GetVendor();
++    if (!vendor.empty()) {
++      return String::FromUTF8(vendor);
++    }
++  }
++  
++  return String("Google Inc.");
+ }
+ 
+ String NavigatorID::vendorSub() const {
+@@ -41,6 +72,20 @@ String NavigatorID::vendorSub() const {
+ }
+ 
++// 移除 webdriver 标记
++bool NavigatorID::webdriver() const {
++  // 指纹注入: 强制返回 false/undefined
++  // 这样可以避免被检测为自动化浏览器
++  return false;
++}
++
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/frame/navigator_language.cc b/third_party/blink/renderer/core/frame/navigator_language.cc
+index 0123456..jklmnop 100644
+--- a/third_party/blink/renderer/core/frame/navigator_language.cc
++++ b/third_party/blink/renderer/core/frame/navigator_language.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "third_party/blink/renderer/platform/language.h"
+ #include "third_party/blink/renderer/platform/wtf/vector.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace blink {
+ 
+@@ -13,7 +14,17 @@ AtomicString NavigatorLanguage::language() {
+   // 浏览器语言
+   // 例如: "zh-CN", "en-US"
+   
+-  return DefaultLanguage();
++  // 指纹注入: Language
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::string lang = injector->GetLanguage();
++    if (!lang.empty()) {
++      return AtomicString::FromUTF8(lang.c_str());
++    }
++  }
++  
++  return DefaultLanguage();
+ }
+ 
+ Vector<String> NavigatorLanguage::languages() {
+@@ -21,6 +32,19 @@ Vector<String> NavigatorLanguage::languages() {
+   // 例如: ["zh-CN", "zh", "en-US", "en"]
+   
+   Vector<String> result;
++  
++  // 指纹注入: Languages数组
++  content::FingerprintInjector* injector = content::FingerprintInjector::GetInstance();
++  if (injector->IsInitialized()) {
++    std::vector<std::string> langs = injector->GetLanguages();
++    if (!langs.empty()) {
++      for (const auto& lang : langs) {
++        result.push_back(String::FromUTF8(lang));
++      }
++      return result;
++    }
++  }
++  
+   result.push_back(DefaultLanguage());
+   return result;
+ }
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 1234567..klmnopq 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -15,6 +15,7 @@
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/render_process_host_observer.h"
+ #include "content/public/common/content_switches.h"
++#include "content/browser/fingerprint_injector.h"
+ 
+ namespace content {
+ 
+@@ -234,6 +235,10 @@ bool RenderProcessHostImpl::Init() {
+   
+   CreateMessageFilters();
+   
++  // 初始化指纹注入器
++  FingerprintInjector* injector = FingerprintInjector::GetInstance();
++  injector->Initialize();
++  
+   RegisterMojoInterfaces();
+   
+   child_process_launcher_ = std::make_unique<ChildProcessLauncher>(
+diff --git a/third_party/blink/renderer/core/frame/navigator.idl b/third_party/blink/renderer/core/frame/navigator.idl
+index 2345678..lmnopqr 100644
+--- a/third_party/blink/renderer/core/frame/navigator.idl
++++ b/third_party/blink/renderer/core/frame/navigator.idl
+@@ -15,7 +15,8 @@ interface Navigator {
+     readonly attribute DOMString vendor;
+     readonly attribute DOMString vendorSub;
+     
+-    readonly attribute boolean webdriver;
++    // 指纹注入: webdriver属性被移除或始终返回false
++    // readonly attribute boolean webdriver;
+     
+     readonly attribute unsigned long long hardwareConcurrency;
+     readonly attribute double deviceMemory;
