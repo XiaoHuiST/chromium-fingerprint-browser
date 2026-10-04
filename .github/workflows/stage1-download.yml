@@ -58,22 +58,23 @@ jobs:
         mkdir chromium
         cd chromium
         
-        # 创建 .gclient 文件
+        # 直接使用git clone (更可靠)
+        git clone --depth=1 --single-branch --branch 154.0.6478.126 https://github.com/chromium/chromium.git src
+        
+        cd src
+        
+        # 创建简化的 .gclient
         @"
         solutions = [
           {
             "name": "src",
-            "url": "https://chromium.googlesource.com/chromium/src.git",
+            "url": "https://github.com/chromium/chromium.git",
             "managed": False,
             "custom_deps": {},
             "custom_vars": {}
           }
         ]
-        target_os = ["win"]
-        "@ | Out-File -FilePath .gclient -Encoding ASCII
-        
-        # 下载源码
-        gclient sync --no-history --shallow
+        "@ | Out-File -FilePath ../.gclient -Encoding ASCII
       shell: pwsh
       timeout-minutes: 240
       
